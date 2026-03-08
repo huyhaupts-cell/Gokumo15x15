@@ -91,12 +91,15 @@ class AlphaZeroGomoku:
         }
         
         for game_id in range(self.num_games_per_iteration):
-            # Cần tạo môi trường mới hoặc gọi env.reset() trong SelfPlayGame
             env = GomokuEnv(board_size=15, win_condition=5)
+            
+            # Bóc lớp vỏ DataParallel ra để lấy model gốc (raw model) chạy Self-Play
+            # Vừa tránh lỗi hàm prepare_input, vừa giúp MCTS chạy nhanh hơn trên 1 GPU!
+            raw_model = self.network.module if hasattr(self.network, 'module') else self.network
             
             game = SelfPlayGame(
                 env,
-                self.network,
+                raw_model,
                 MCTS,
                 mcts_kwargs,
                 temperature=1.0
