@@ -94,10 +94,11 @@ class MCTS:
                 
             root = self.root
             valid_moves = self.get_candidate_moves(board)
+            device = next(self.network.parameters()).device
 
             # 1. Expand root nếu chưa được expand
             if not root.is_expanded() and len(valid_moves) > 0:
-                input_tensor = self.network.prepare_input(board, player)
+                input_tensor = self.network.prepare_input(board, player).to(device)
                 
                 with torch.no_grad():
                     policy, value = self.network(input_tensor)
@@ -142,7 +143,7 @@ class MCTS:
                 
                 # SỬA LỖI 1: Bỏ root.visits == 0 đi. Ở đây ta đang xét 'node' dưới đáy cây!
                 if len(valid_moves) > 0:
-                    input_tensor = self.network.prepare_input(node.board, current_player)
+                    input_tensor = self.network.prepare_input(node.board, current_player).to(device)
                     
                     with torch.no_grad():
                         policy, value = self.network(input_tensor)
