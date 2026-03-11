@@ -148,15 +148,22 @@ class AlphaZeroGomoku:
 
 
 if __name__ == '__main__':
-    # Configuration
+    # Configuration thực tế cho giới hạn 12h của Kaggle
     config = {
-        'num_iterations': 50,
-        'num_games_per_iteration': 50, # Giảm xuống 10 lúc đầu để test luồng
-        'num_mcts_simulations': 400,   # Giảm xuống 200 lúc đầu cho nhanh
-        'batch_size': 512,
-        'steps_per_iteration': 150
+        "num_iterations": 200,             
+        "num_games_per_iteration": 100,    # Giảm xuống 100 ván (vẫn thu được 100*40*8 = 32,000 mẫu nhờ Augment)
+        "num_mcts_simulations": 600,       # 600 là cực kỳ đủ sâu cho Caro 15x15
+        "batch_size": 512,                 
+        "steps_per_iteration": 80,        
+        "replay_buffer_size": 300000,      
+        "num_parallel_games": 16           # Giảm số thread song song tránh vỡ RAM CPU
     }
     
     # Train
     agent = AlphaZeroGomoku(**config)
+    
+    # Đảm bảo đường dẫn này đúng với Kaggle Input hoặc Local của bạn
+    checkpoint_path = "./checkpoints/model_iter_0004.pt" 
+    agent.load_checkpoint(checkpoint_path)
+    
     agent.train()
