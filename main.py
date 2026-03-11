@@ -184,7 +184,7 @@ if __name__ == '__main__':
     agent = AlphaZeroGomoku(**config)
     
     # Đảm bảo đường dẫn này khớp với thư mục Input trên Kaggle của bạn
-    checkpoint_path = "/kaggle/input/model-iter-0004/model_iter_0004.pt" 
+    checkpoint_path = "model_iter_0004.pt" 
     agent.load_checkpoint(checkpoint_path)
     
     agent.train()
