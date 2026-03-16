@@ -29,7 +29,7 @@ def main():
     # ==========================================
     try:
         player1_model = load_ai("model_iter_0022.pt", device)
-        player2_model = load_ai("model_iter_0012.pt", device)
+        player2_model = load_ai("model_iter_0030.pt", device)
         
     except Exception as e:
         print(f"❌ Lỗi khi tải Model: {e}\nHãy chắc chắn 2 file .pt đang nằm cùng thư mục.")
@@ -55,12 +55,12 @@ def main():
         
         # Đảo bên luân phiên cho công bằng
         if game % 2 == 0:
-            black_name, white_name = "Vòng 5", "Vòng 12"
+            black_name, white_name = "Vòng 22", "Vòng 30"
             # Lưu ý: Nếu class MCTS của bạn yêu cầu truyền 'env', hãy thêm env vào: MCTS(env, model...)
             mcts_p1 = MCTS(env, player1_model, num_simulations=MCTS_SIMULATIONS) 
             mcts_p2 = MCTS(env, player2_model, num_simulations=MCTS_SIMULATIONS)
         else:
-            black_name, white_name = "Vòng 12", "Vòng 5"
+            black_name, white_name = "Vòng 30", "Vòng 22"
             mcts_p1 = MCTS(env, player2_model, num_simulations=MCTS_SIMULATIONS) 
             mcts_p2 = MCTS(env, player1_model, num_simulations=MCTS_SIMULATIONS)
         

@@ -68,7 +68,7 @@ def main():
     # ==========================================
     print("Đang tải AI, vui lòng đợi...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    MODEL_PATH = "model_iter_0022.pt" # Tên file model của bạn
+    MODEL_PATH = "model_iter_0030.pt" # Tên file model của bạn
     
     env = GomokuEnv(board_size=BOARD_SIZE, win_condition=5)
     network = GomokuNet(board_size=BOARD_SIZE, num_residual_blocks=10, channels=128).to(device)
