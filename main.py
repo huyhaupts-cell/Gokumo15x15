@@ -110,7 +110,7 @@ class AlphaZeroGomoku:
         }
         
         # 1. Khởi tạo môi trường Vectorized (nhiều bàn cờ cùng lúc)
-        vec_env = VectorizedGomokuEnv(num_envs=16, board_size=15, win_condition=5)
+        vec_env = VectorizedGomokuEnv(num_envs=self.num_games_per_iteration, board_size=15, win_condition=5)
         
         # Lấy model raw để chạy
         raw_model = self.network.module if hasattr(self.network, 'module') else self.network
