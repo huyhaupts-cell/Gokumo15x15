@@ -46,14 +46,14 @@ class ReplayBuffer:
         for sym_state, sym_pi in symm_data:
             self.buffer.append((
                 sym_state.astype(np.int8),
-                sym_pi.astype(np.float16),
+                sym_pi.astype(np.float32),
                 np.float32(game_outcome)
             ))
     
     def sample(self, batch_size: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample batch from buffer ready for PyTorch"""
         size = min(batch_size, len(self.buffer))
-        idx = np.random.randint(0, len(self.buffer), size=size)
+        idx = np.random.choice(len(self.buffer), size=size, replace=False)
         batch = [self.buffer[i] for i in idx]
         
         size = len(batch)

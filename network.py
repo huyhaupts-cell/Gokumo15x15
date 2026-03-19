@@ -24,7 +24,7 @@ class GomokuNet(nn.Module):
     """
     AlphaZero-style network: Shared trunk + Policy head + Value head
     """
-    def __init__(self, board_size: int = 15, num_residual_blocks: int = 10, channels: int = 128):
+    def __init__(self, board_size: int = 15, num_residual_blocks: int = 6, channels: int = 64):
         super(GomokuNet, self).__init__()
         self.board_size = board_size
         

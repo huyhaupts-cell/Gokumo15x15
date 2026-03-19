@@ -17,13 +17,15 @@ class SelfPlayGame:
         
         # 1. KHỞI TẠO MCTS ĐÚNG 1 LẦN (Để tận dụng Tree Reuse)
         mcts = self.mcts_class(self.env, self.network, **self.mcts_kwargs)
+        move_count = 0
 
         while True: 
             board = self.env.board
             player = self.env.current_player
-            
+
             # MCTS Search (Không khởi tạo lại mcts ở đây nữa)
-            action_probs, _ = mcts.search(board, player)
+            temp = 1.0 if move_count < 15 else 0.05
+            action_probs, _ = mcts.search(board, player, temperature=temp)
             
             # Select action with temperature
             if self.temperature > 0:
@@ -55,7 +57,8 @@ class SelfPlayGame:
             # (Chú ý: Đảm bảo trong class MCTS của bạn đã định nghĩa hàm update_root nhé)
             if hasattr(mcts, 'update_root'):
                 mcts.update_root(action)
-        
+            move_count += 1
+            
         episode_data = []
         
         # Gán nhãn outcome

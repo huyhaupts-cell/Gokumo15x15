@@ -1,205 +1,235 @@
 import math
 import numpy as np
 import torch
-from typing import Dict, Tuple
+
 
 class MCTSNode:
-    """Nút trong cây MCTS"""
-    def __init__(self, board_state: np.ndarray, parent=None, action: int = None, player: int = 1):
-        self.board = board_state.copy() # SỬA LỖI 1: Thêm .copy()
-        
+    def __init__(self, board, parent=None, action=None, player=1):
+        self.board = board.copy()
+
         if action is not None and parent is not None:
-            board_size = self.board.shape[0]
-            x, y = divmod(action, board_size)
+            size = self.board.shape[0]
+            x, y = divmod(action, size)
             self.board[x, y] = player
-            
+
         self.parent = parent
         self.action = action
-        self.children: Dict[int, MCTSNode] = {}
+        self.player = player
+
+        self.children = {}
         self.visits = 0
         self.value_sum = 0.0
         self.policy_prior = 0.0
 
     @property
-    def q_value(self) -> float:
+    def q_value(self):
         if self.visits == 0:
             return 0.0
         return self.value_sum / self.visits
 
-    def ucb_score(self, c_puct: float = 1.25) -> float: 
-        exploration = c_puct * self.policy_prior * math.sqrt(self.parent.visits + 1) / (1 + self.visits)
-        return self.q_value + exploration
+    def ucb_score(self, c_puct):
+        prior = self.policy_prior
+        return self.q_value + c_puct * prior * math.sqrt(self.parent.visits + 1) / (1 + self.visits)
 
-    def is_expanded(self) -> bool:
-        return len(self.children) > 0
+    def select_child(self, c_puct):
+        return max(self.children.items(), key=lambda item: item[1].ucb_score(c_puct))
 
-    def select_child(self, c_puct) -> Tuple[int, 'MCTSNode']:
-        best_action, best_child = max(
-            self.children.items(),
-            key=lambda item: item[1].ucb_score(c_puct)
-        )
-        return best_action, best_child
+    def expand(self, valid_moves, policy_priors, next_player):
 
-    def expand(self, valid_moves: np.ndarray, policy_priors: np.ndarray, next_player: int):
         for move in valid_moves:
             if move not in self.children:
-                self.children[move] = MCTSNode(self.board, parent=self, action=move, player=next_player)
-                self.children[move].policy_prior = policy_priors[move]
+                child = MCTSNode(self.board, parent=self, action=move, player=next_player)
+                child.policy_prior = policy_priors[move]
+                self.children[move] = child
 
-    def backup(self, value: float):
+    def backup(self, value):
+        value = max(-1.0, min(1.0, value))
+
         self.visits += 1
         self.value_sum += value
+
         if self.parent is not None:
             self.parent.backup(-value)
 
 
 class MCTS:
-    """Tìm kiếm Cây Monte Carlo với sự dẫn dắt của Mạng Nơ-ron"""
-    
-    def __init__(self, env, network, num_simulations: int = 800, c_puct: float = 1.25):
+    def __init__(self, env, network, num_simulations=400, c_puct=1.5):
         self.env = env
         self.network = network
         self.num_simulations = num_simulations
         self.c_puct = c_puct
         self.root = None
+        self.cache = {}
 
-    def get_candidate_moves(self, board, radius=2):
+
+    def get_candidate_moves(self, board):
         size = board.shape[0]
-        moves = set()
         stones = np.argwhere(board != 0)
 
-        if len(stones) == 0:
-            return np.array([size*size//2])
+        if len(stones) < 10:
+            return np.where(board.ravel() == 0)[0]
 
+        moves = set()
         for x, y in stones:
-            for dx in range(-radius, radius+1):
-                for dy in range(-radius, radius+1):
-                    nx, ny = x+dx, y+dy
+            for dx in range(-2, 3):
+                for dy in range(-2, 3):
+                    nx, ny = x + dx, y + dy
                     if 0 <= nx < size and 0 <= ny < size:
-                        if board[nx,ny] == 0:
-                            moves.add(nx*size+ny)
+                        if board[nx, ny] == 0:
+                            moves.add(nx * size + ny)
 
         return np.array(list(moves))
-        
-    def update_root(self, action: int):
-        if self.root is not None and action in self.root.children:
+
+    def update_root(self, action):
+        if self.root and action in self.root.children:
             self.root = self.root.children[action]
             self.root.parent = None
         else:
             self.root = None
 
-    def search(self, board: np.ndarray, player: int) -> Tuple[np.ndarray, float]:
-            if self.root is None:
-                self.root = MCTSNode(board, player=player)
-                
-            root = self.root
-            valid_moves = self.get_candidate_moves(board)
-            device = next(self.network.parameters()).device
+    def get_action_probs(self, root, temperature=1.0):
+        action_probs = np.zeros(self.env.board_size ** 2)
 
-            # 1. Expand root nếu chưa được expand
-            if not root.is_expanded() and len(valid_moves) > 0:
-                input_tensor = self.network.prepare_input(board, player).to(device)
-                
-                with torch.no_grad():
-                    policy, value = self.network(input_tensor)
+        for move, child in root.children.items():
+            action_probs[move] = child.visits
 
-                policy_logits = policy[0].clone()
-                mask = torch.ones_like(policy_logits) * float('-inf')
-                mask[valid_moves] = 0.0
-                policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
+        if temperature == 0:
+            best = np.argmax(action_probs)
+            probs = np.zeros_like(action_probs)
+            probs[best] = 1.0
+            return probs
 
-                root.expand(valid_moves, policy_priors, player)
-                
-                # SỬA LỖI 3: Khôi phục lại dòng backup cho root
-                root.backup(value[0, 0].item())
+        action_probs = action_probs ** (1.0 / temperature)
+        action_probs /= np.sum(action_probs) + 1e-8
 
-            # 2. SỬA LỖI 2: Luôn bơm nhiễu ở đầu lượt search để đảm bảo Exploration
-            if len(valid_moves) > 0:
-                epsilon = 0.25
-                alpha = 0.03
-                noise = np.random.dirichlet([alpha] * len(valid_moves))
-                
-                sum_priors = 0.0
-                for i, move in enumerate(valid_moves):
-                    if move in root.children:
-                        root.children[move].policy_prior = (1 - epsilon) * root.children[move].policy_prior + epsilon * noise[i]
-                        sum_priors += root.children[move].policy_prior
-                
-                if sum_priors > 0:
-                    for move in valid_moves:
-                        if move in root.children:
-                            root.children[move].policy_prior /= sum_priors
+        return action_probs
 
-            # 3. Chạy Simulations
-            for _ in range(self.num_simulations):
-                node = root
-                current_player = player
-                
-                # Đi xuống đáy cây
-                while node.is_expanded():
-                    action, node = node.select_child(self.c_puct)
-                    current_player = 3 - current_player
+    def check_winner_fast(self, board, last_move):
+        if last_move is None:
+            return 0
 
-                # QUAN TRỌNG NHẤT: Kiểm tra xem nước cờ vừa đánh có kết thúc game không
-                winner = self.check_winner(node.board)
-                
-                if winner != 0:
-                    # Nếu có người thắng, không cần Mạng Nơ-ron đoán nữa.
-                    # Góc nhìn: Nếu người vừa đánh (3 - current_player) là winner, 
-                    # thì người hiện tại (current_player) chắc chắn nhận giá trị THUA (-1.0)
-                    value = -1.0
-                    node.backup(-value)
-                    continue # Bỏ qua phần mạng Nơ-ron, chuyển sang simulation tiếp theo
-
-                valid_moves = self.get_candidate_moves(node.board)
-                
-                # Nếu hòa (hết chỗ đánh)
-                if len(valid_moves) == 0:
-                    value = 0.0
-                    node.backup(-value)
-                    continue
-
-                # NẾU GAME CHƯA KẾT THÚC, MỚI NHỜ MẠNG NƠ-RON ĐÁNH GIÁ
-                input_tensor = self.network.prepare_input(node.board, current_player).to(device)
-                
-                with torch.no_grad():
-                    policy, value = self.network(input_tensor)
-                
-                policy_logits = policy[0].clone()
-                mask = torch.ones_like(policy_logits) * float('-inf')
-                mask[valid_moves] = 0.0
-                policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
-                value = value[0, 0].item()
-                
-                node.expand(valid_moves, policy_priors, current_player)
-                node.backup(-value)
-
-            # 4. Trả kết quả
-            action_probs = np.zeros(self.env.board_size ** 2)
-            for move, child in root.children.items():
-                action_probs[move] = child.visits
-                
-            total = np.sum(action_probs)
-            if total > 0:
-                action_probs /= total
-            else:
-                action_probs = np.ones_like(action_probs) / len(action_probs)
-            
-            return action_probs, -root.q_value
-    
-    def check_winner(self, board: np.ndarray) -> int:
-        """Kiểm tra nhanh xem bàn cờ đã có người thắng chưa. Trả về 1 (Đen), 2 (Trắng), hoặc 0"""
         size = board.shape[0]
-        for i in range(size):
-            for j in range(size):
-                p = board[i, j]
-                if p == 0: continue
-                # Kiểm tra hàng ngang
-                if j <= size - 5 and np.all(board[i, j:j+5] == p): return p
-                # Kiểm tra hàng dọc
-                if i <= size - 5 and np.all(board[i:i+5, j] == p): return p
-                # Kiểm tra chéo xuống
-                if i <= size - 5 and j <= size - 5 and np.all([board[i+k, j+k] == p for k in range(5)]): return p
-                # Kiểm tra chéo lên
-                if i >= 4 and j <= size - 5 and np.all([board[i-k, j+k] == p for k in range(5)]): return p
+        x, y = divmod(last_move, size)
+        player = board[x, y]
+
+        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
+
+        for dx, dy in directions:
+            count = 1
+
+            for step in range(1, 5):
+                nx, ny = x + dx * step, y + dy * step
+                if 0 <= nx < size and 0 <= ny < size and board[nx, ny] == player:
+                    count += 1
+                else:
+                    break
+
+            for step in range(1, 5):
+                nx, ny = x - dx * step, y - dy * step
+                if 0 <= nx < size and 0 <= ny < size and board[nx, ny] == player:
+                    count += 1
+                else:
+                    break
+
+            if count >= 5:
+                return player
+
         return 0
+
+    def search(self, board, player, temperature=1.0):
+        if len(self.cache) > 20000:
+            self.cache.clear()
+        device = next(self.network.parameters()).device
+
+        if self.root is None:
+            self.root = MCTSNode(board, player=player)
+
+        root = self.root
+
+        valid_moves = self.get_candidate_moves(board)
+
+        # Expand root
+        if len(root.children) == 0:
+            input_tensor = self.network.prepare_input(board, player).to(device)
+            key = (board.tobytes(), player)
+
+            if key in self.cache:
+                policy, value = self.cache[key]
+            else:
+                with torch.no_grad():
+                    policy, value = self.network(input_tensor.to(device))
+                self.cache[key] = (policy, value)
+
+            policy_logits = policy[0].clone()
+
+            mask = torch.ones_like(policy_logits) * float('-inf')
+            mask[valid_moves] = 0
+
+            policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
+
+            root.expand(valid_moves, policy_priors, player)
+            root.value_sum += value.item()
+            root.visits += 1
+
+        # Dirichlet noise (root only)
+        if len(valid_moves) > 0:
+            epsilon = 0.25 if root.visits < 30 else 0.05
+            alpha = 0.03 * (self.env.board_size**2 / len(valid_moves))
+
+            noise = np.random.dirichlet([alpha] * len(valid_moves))
+
+            noise_dict = {move: noise[i] for i, move in enumerate(valid_moves)}
+
+            for move, child in root.children.items():
+                if move in noise_dict:
+                    child.policy_prior = (1 - epsilon) * child.policy_prior + epsilon * noise_dict[move]
+
+        # Simulations
+        for _ in range(self.num_simulations):
+            node = root
+            current_player = player
+            last_action = None
+
+            # Selection
+            while node.children:
+                action, node = node.select_child(self.c_puct)
+                current_player = 3 - current_player
+                last_action = action
+
+            # Terminal check
+            winner = self.check_winner_fast(node.board, last_action)
+            
+            if winner != 0:
+                value = -1.0
+                node.backup(-value)
+                continue
+
+            valid_moves = self.get_candidate_moves(node.board)
+
+            if len(valid_moves) == 0:
+                node.backup(0.0)
+                continue
+
+            # NN evaluation
+            input_tensor = self.network.prepare_input(node.board, current_player).to(device)
+            key = (node.board.tobytes(), current_player)
+
+            if key in self.cache:
+                policy, value = self.cache[key]
+            else:
+                with torch.no_grad():
+                    policy, value = self.network(input_tensor.to(device))
+                self.cache[key] = (policy, value)
+
+            policy_logits = policy[0].clone()
+
+            mask = torch.ones_like(policy_logits) * float('-inf')
+            mask[valid_moves] = 0
+
+            policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
+            value = max(-1.0, min(1.0, value.item()))
+
+            node.expand(valid_moves, policy_priors, current_player)
+            node.backup(-value)
+
+        return self.get_action_probs(root, temperature), root.q_value

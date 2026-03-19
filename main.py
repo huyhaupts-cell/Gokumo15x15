@@ -1,15 +1,16 @@
 import torch
 import numpy as np
 import os
-import concurrent.futures
 from datetime import datetime
 
+
+from vectorized_gomoku_env import VectorizedGomokuEnv
+from batched_mcts import BatchedMCTS
+from batched_self_play import BatchedSelfPlayGame
+
 # Giả sử bạn lưu các class vào các thư mục tương ứng
-from GameEnv import GomokuEnv
 from network import GomokuNet
-from mcts import MCTS
 from buffer import ReplayBuffer
-from self_play import SelfPlayGame 
 from trainer import Trainer
 
 class AlphaZeroGomoku:
@@ -27,13 +28,7 @@ class AlphaZeroGomoku:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Initialize components
-        self.env = GomokuEnv(board_size=15, win_condition=5)
-        self.network = GomokuNet(board_size=15, num_residual_blocks=10, channels=128).to(self.device)
-        
-        # BẬT TÍNH NĂNG CHẠY SONG SONG TRÊN NHIỀU GPU CỦA PYTORCH
-        if torch.cuda.device_count() > 1:
-            print(f"Let's use {torch.cuda.device_count()} GPUs!")
-            self.network = torch.nn.DataParallel(self.network)
+        self.network = GomokuNet(board_size=15, num_residual_blocks=6, channels=64).to(self.device)
             
         self.trainer = Trainer(self.network, self.device, lr=0.001, l2_regularization=1e-4)
         self.replay_buffer = ReplayBuffer(capacity=replay_buffer_size)
@@ -59,10 +54,11 @@ class AlphaZeroGomoku:
             
             # Xử lý an toàn: Bóc lớp vỏ DataParallel nếu có
             raw_model = self.network.module if hasattr(self.network, 'module') else self.network
+            raw_model.load_state_dict(checkpoint['model_state_dict'])
             raw_model = raw_model.to(self.device)
             raw_model.eval()      
             
-            raw_model.load_state_dict(checkpoint['model_state_dict'])
+
             self.trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.start_iteration = checkpoint['iteration'] + 1
             print(f"=> Nạp thành công! Sẽ huấn luyện tiếp từ vòng {self.start_iteration + 1}")
@@ -104,44 +100,38 @@ class AlphaZeroGomoku:
             print(f"      Checkpoint saved")
     
     def _run_self_play(self) -> list:
-        """Run self-play games and collect experiences IN PARALLEL"""
-        all_experiences = []
+        """Run self-play games with BATCHED MCTS on GPU"""
+        print(f"      Đang khởi chạy {self.num_games_per_iteration} ván cờ song song bằng Batched MCTS...")
         
         mcts_kwargs = {
             "num_simulations": self.num_mcts_simulations, 
-            "c_puct": 1.5
+            "c_puct": 1.5,
+            "board_size": 15
         }
         
-        # Bóc vỏ DataParallel để lấy raw model cho MCTS chạy trên 1 GPU
+        # 1. Khởi tạo môi trường Vectorized (nhiều bàn cờ cùng lúc)
+        vec_env = VectorizedGomokuEnv(num_envs=16, board_size=15, win_condition=5)
+        
+        # Lấy model raw để chạy
         raw_model = self.network.module if hasattr(self.network, 'module') else self.network
+        raw_model.eval()
+        # 2. Khởi tạo Batched Self Play Game
+        game = BatchedSelfPlayGame(
+            vec_env=vec_env, 
+            network=raw_model, 
+            batched_mcts_class=BatchedMCTS, 
+            mcts_kwargs=mcts_kwargs, 
+            num_target_games=self.num_games_per_iteration
+        )
         
-        # Hàm con để chạy 1 ván cờ độc lập
-        def play_single_game(game_id):
-            env = GomokuEnv(board_size=15, win_condition=5)
-            game = SelfPlayGame(env, raw_model, MCTS, mcts_kwargs, temperature=1.0)
-            try:
-                with torch.no_grad():
-                    experiences = game.play()
-                return experiences, game_id
-            except Exception as e:
-                print(f"      Error in game {game_id+1}: {e}")
-                return [], game_id
-
-        print(f"      Đang khởi chạy {self.num_games_per_iteration} ván cờ trên {self.num_parallel_games} luồng song song...")
-        
-        # Sử dụng ThreadPoolExecutor để chạy đa luồng
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_parallel_games) as executor:
-            futures = [executor.submit(play_single_game, i) for i in range(self.num_games_per_iteration)]
-            
-            completed_games = 0
-            for future in concurrent.futures.as_completed(futures):
-                experiences, game_id = future.result()
-                if experiences:
-                    all_experiences.extend(experiences)
-                    completed_games += 1
-                    print(f"      [Tiến độ] Ván {completed_games}/{self.num_games_per_iteration} hoàn thành. (Độ dài: {len(experiences)} nước)")
-                    
-        return all_experiences
+        try:
+            with torch.no_grad():
+                experiences = game.play()
+            print(f"      Hoàn thành self-play! Thu thập được {len(experiences)} states.")
+            return experiences
+        except Exception as e:
+            print(f"      Lỗi trong quá trình Batched Self-Play: {e}")
+            return []
     
     def _train_network(self) -> tuple:
         """Train network on replay buffer"""
@@ -171,13 +161,13 @@ class AlphaZeroGomoku:
 if __name__ == '__main__':
     # Configuration thực tế cho Kaggle
     config = {
-        "num_iterations": 100,             
-        "num_games_per_iteration": 64,    
-        "num_mcts_simulations": 400,       
-        "batch_size": 512,                 
-        "steps_per_iteration": 1000,        
-        "replay_buffer_size": 100000,    
-        "num_parallel_games": 16           
+        "num_iterations": 100,
+        "num_games_per_iteration": 32,
+        "num_mcts_simulations": 120,
+        "batch_size": 256,
+        "steps_per_iteration": 200,
+        "replay_buffer_size": 80000,
+        "num_parallel_games": 1
     }
     
     # Train
