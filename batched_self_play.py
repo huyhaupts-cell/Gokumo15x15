@@ -13,7 +13,7 @@ class BatchedSelfPlayGame:
         self.vec_env.reset()
         completed_games_data = []
         games_completed = 0
-        
+        step_counter = 0
         game_histories = [[] for _ in range(self.num_envs)]
         move_counts = [0] * self.num_envs
         
@@ -29,6 +29,7 @@ class BatchedSelfPlayGame:
             # --- THÊM PHẦN NÀY ĐỂ XEM TIẾN ĐỘ ---
             step_counter += 1
             if step_counter % 10 == 0:
+                step_counter = 0
                 # In ra số nước đi lớn nhất hiện tại của lô ván cờ đang chạy
                 current_max_move = max(move_counts)
                 print(f"        ⏳ [Đang giả lập] Lô hiện tại đang ở nước đi thứ {current_max_move}/225...")
