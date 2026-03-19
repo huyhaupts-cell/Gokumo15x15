@@ -51,6 +51,21 @@ def draw_board(screen, board):
 
     pygame.display.flip()
 
+def draw_winner(screen, message):
+    """Vẽ thông báo người chiến thắng nổi lên giữa màn hình"""
+    font = pygame.font.SysFont("Arial", 48, bold=True)
+    text = font.render(message, True, (200, 30, 30))
+    
+    # Tạo lớp overlay mờ
+    overlay = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    overlay.set_alpha(150)
+    overlay.fill((255, 255, 255))
+    screen.blit(overlay, (0, 0))
+    
+    text_rect = text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2))
+    screen.blit(text, text_rect)
+    pygame.display.flip()
+
 def get_click_pos(pos):
     """Chuyển đổi tọa độ chuột (pixel) sang tọa độ mảng (row, col)"""
     x, y = pos
@@ -75,7 +90,13 @@ def main():
     
     try:
         checkpoint = torch.load(MODEL_PATH, map_location=device)
-        network.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
+        
+        # BÓC LỚP VỎ DATAPARALLEL TỪ KAGGLE
+        if list(state_dict.keys())[0].startswith('module.'):
+            state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            
+        network.load_state_dict(state_dict)
         network.eval()
         print("Tải AI thành công!")
     except Exception as e:
@@ -111,14 +132,17 @@ def main():
                     draw_board(screen, env.board)
                     
                     if terminated or truncated:
-                        print("🎉 TRẬN ĐẤU KẾT THÚC!")
+                        winner = info.get("winner", 0)
+                        msg = "🏆 BẠN ĐÃ THẮNG!" if winner == human_player else ("🤝 HÒA NHAU!" if winner == 0 else "💀 AI CHIẾN THẮNG!")
+                        draw_winner(screen, msg)
+                        print(msg)
                         game_over = True
 
         # Lượt của AI
         if not game_over and env.current_player != human_player:
-            pygame.display.set_caption("🤖 AlphaZero đang suy nghĩ...") # Đổi tiêu đề cửa sổ
+            pygame.display.set_caption("🤖 AlphaZero đang suy nghĩ...") 
             
-            with torch.no_grad():
+            with torch.inference_mode(): # Thay no_grad bằng inference_mode cho tối ưu
                 action_probs, _ = mcts.search(env.board.copy(), env.current_player)
             action = np.argmax(action_probs)
             
@@ -129,7 +153,10 @@ def main():
             draw_board(screen, env.board)
             
             if terminated or truncated:
-                print("🎉 TRẬN ĐẤU KẾT THÚC!")
+                winner = info.get("winner", 0)
+                msg = "💀 AI CHIẾN THẮNG!" if winner != 0 else "🤝 HÒA NHAU!"
+                draw_winner(screen, msg)
+                print(msg)
                 game_over = True
 
 if __name__ == "__main__":
