@@ -26,7 +26,13 @@ class BatchedSelfPlayGame:
             # GỌI BATCHED MCTS (GPU TÍNH TOÁN CÙNG LÚC num_envs BÀN CỜ)
             with torch.no_grad():
                 action_probs_batch = self.mcts.search(boards, players, temperatures)
-            
+            # --- THÊM PHẦN NÀY ĐỂ XEM TIẾN ĐỘ ---
+            step_counter += 1
+            if step_counter % 10 == 0:
+                # In ra số nước đi lớn nhất hiện tại của lô ván cờ đang chạy
+                current_max_move = max(move_counts)
+                print(f"        ⏳ [Đang giả lập] Lô hiện tại đang ở nước đi thứ {current_max_move}/225...")
+            # ------------------------------------
             actions = []
             for i in range(self.num_envs):
                 probs = action_probs_batch[i]
