@@ -135,29 +135,43 @@ class MCTS:
                 node = root
                 current_player = player
                 
+                # Đi xuống đáy cây
                 while node.is_expanded():
                     action, node = node.select_child(self.c_puct)
                     current_player = 3 - current_player
 
+                # QUAN TRỌNG NHẤT: Kiểm tra xem nước cờ vừa đánh có kết thúc game không
+                winner = self.check_winner(node.board)
+                
+                if winner != 0:
+                    # Nếu có người thắng, không cần Mạng Nơ-ron đoán nữa.
+                    # Góc nhìn: Nếu người vừa đánh (3 - current_player) là winner, 
+                    # thì người hiện tại (current_player) chắc chắn nhận giá trị THUA (-1.0)
+                    value = -1.0
+                    node.backup(-value)
+                    continue # Bỏ qua phần mạng Nơ-ron, chuyển sang simulation tiếp theo
+
                 valid_moves = self.get_candidate_moves(node.board)
                 
-                # SỬA LỖI 1: Bỏ root.visits == 0 đi. Ở đây ta đang xét 'node' dưới đáy cây!
-                if len(valid_moves) > 0:
-                    input_tensor = self.network.prepare_input(node.board, current_player).to(device)
-                    
-                    with torch.no_grad():
-                        policy, value = self.network(input_tensor)
-                    
-                    policy_logits = policy[0].clone()
-                    mask = torch.ones_like(policy_logits) * float('-inf')
-                    mask[valid_moves] = 0.0
-                    policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
-                    value = value[0, 0].item()
-                    
-                    node.expand(valid_moves, policy_priors, current_player)
-                else:
+                # Nếu hòa (hết chỗ đánh)
+                if len(valid_moves) == 0:
                     value = 0.0
+                    node.backup(-value)
+                    continue
 
+                # NẾU GAME CHƯA KẾT THÚC, MỚI NHỜ MẠNG NƠ-RON ĐÁNH GIÁ
+                input_tensor = self.network.prepare_input(node.board, current_player).to(device)
+                
+                with torch.no_grad():
+                    policy, value = self.network(input_tensor)
+                
+                policy_logits = policy[0].clone()
+                mask = torch.ones_like(policy_logits) * float('-inf')
+                mask[valid_moves] = 0.0
+                policy_priors = torch.softmax(policy_logits + mask, dim=0).cpu().numpy()
+                value = value[0, 0].item()
+                
+                node.expand(valid_moves, policy_priors, current_player)
                 node.backup(-value)
 
             # 4. Trả kết quả
@@ -172,3 +186,20 @@ class MCTS:
                 action_probs = np.ones_like(action_probs) / len(action_probs)
             
             return action_probs, -root.q_value
+    
+    def check_winner(self, board: np.ndarray) -> int:
+        """Kiểm tra nhanh xem bàn cờ đã có người thắng chưa. Trả về 1 (Đen), 2 (Trắng), hoặc 0"""
+        size = board.shape[0]
+        for i in range(size):
+            for j in range(size):
+                p = board[i, j]
+                if p == 0: continue
+                # Kiểm tra hàng ngang
+                if j <= size - 5 and np.all(board[i, j:j+5] == p): return p
+                # Kiểm tra hàng dọc
+                if i <= size - 5 and np.all(board[i:i+5, j] == p): return p
+                # Kiểm tra chéo xuống
+                if i <= size - 5 and j <= size - 5 and np.all([board[i+k, j+k] == p for k in range(5)]): return p
+                # Kiểm tra chéo lên
+                if i >= 4 and j <= size - 5 and np.all([board[i-k, j+k] == p for k in range(5)]): return p
+        return 0
