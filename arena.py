@@ -1,113 +1,154 @@
+import pygame
+import sys
 import torch
 import numpy as np
+import time
 from GameEnv import GomokuEnv
 from network import GomokuNet
 from mcts import MCTS
-from tqdm import tqdm
 
+# ==========================================
+# CẤU HÌNH GIAO DIỆN
+# ==========================================
+BOARD_SIZE = 15
+GRID_SIZE = 40  
+MARGIN = 40     
+WINDOW_SIZE = BOARD_SIZE * GRID_SIZE + MARGIN * 2
+
+COLOR_BG = (222, 184, 135)   
+COLOR_LINE = (0, 0, 0)       
+COLOR_BLACK = (20, 20, 20)   
+COLOR_WHITE = (235, 235, 235)
+COLOR_HIGHLIGHT = (255, 0, 0) # Màu đánh dấu nước đi vừa đánh
+
+def draw_board(screen, board, last_action=None):
+    screen.fill(COLOR_BG)
+    
+    # Vẽ lưới
+    for i in range(BOARD_SIZE):
+        pygame.draw.line(screen, COLOR_LINE, (MARGIN + i * GRID_SIZE, MARGIN), (MARGIN + i * GRID_SIZE, WINDOW_SIZE - MARGIN - GRID_SIZE), 2)
+        pygame.draw.line(screen, COLOR_LINE, (MARGIN, MARGIN + i * GRID_SIZE), (WINDOW_SIZE - MARGIN - GRID_SIZE, MARGIN + i * GRID_SIZE), 2)
+        
+    stars = [3, 7, 11]
+    for r in stars:
+        for c in stars:
+            pygame.draw.circle(screen, COLOR_LINE, (MARGIN + c * GRID_SIZE, MARGIN + r * GRID_SIZE), 5)
+
+    # Vẽ quân cờ
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if board[r, c] == 1:
+                pygame.draw.circle(screen, COLOR_BLACK, (MARGIN + c * GRID_SIZE, MARGIN + r * GRID_SIZE), GRID_SIZE // 2 - 2)
+            elif board[r, c] == 2:
+                pygame.draw.circle(screen, COLOR_WHITE, (MARGIN + c * GRID_SIZE, MARGIN + r * GRID_SIZE), GRID_SIZE // 2 - 2)
+
+    # Đánh dấu nước đi cuối cùng
+    if last_action is not None:
+        r, c = divmod(last_action, BOARD_SIZE)
+        pygame.draw.circle(screen, COLOR_HIGHLIGHT, (MARGIN + c * GRID_SIZE, MARGIN + r * GRID_SIZE), 5)
+
+    pygame.display.flip()
+
+def draw_winner(screen, message):
+    font = pygame.font.SysFont("Arial", 48, bold=True)
+    text = font.render(message, True, (200, 30, 30))
+    overlay = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    overlay.set_alpha(150)
+    overlay.fill((255, 255, 255))
+    screen.blit(overlay, (0, 0))
+    text_rect = text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2))
+    screen.blit(text, text_rect)
+    pygame.display.flip()
 
 def load_ai(model_path, device):
-    """Hàm tải siêu trí tuệ, tự động xử lý lỗi DataParallel nếu có"""
-    model = GomokuNet(board_size=15, num_residual_blocks=10, channels=128).to(device)
-    checkpoint = torch.load(model_path, map_location=device)
-    state_dict = checkpoint['model_state_dict']
-    
-    # Bóc lớp vỏ DataParallel nếu file được save từ môi trường đa GPU (Kaggle)
-    if list(state_dict.keys())[0].startswith('module.'):
-        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-        
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
+    """Hàm tải AI, cấu hình 6 blocks, 64 channels theo đúng model của bạn"""
+    network = GomokuNet(board_size=BOARD_SIZE, num_residual_blocks=6, channels=64).to(device)
+    try:
+        checkpoint = torch.load(model_path, map_location=device)
+        state_dict = checkpoint['model_state_dict']
+        if list(state_dict.keys())[0].startswith('module.'):
+            state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        network.load_state_dict(state_dict)
+        network.eval()
+        print(f"✅ Tải thành công: {model_path}")
+        return network
+    except Exception as e:
+        print(f"❌ Lỗi tải {model_path}: {e}")
+        sys.exit()
 
 def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WINDOW_SIZE - GRID_SIZE, WINDOW_SIZE - GRID_SIZE))
+    pygame.display.set_caption("AI vs AI - Trận Chiến Chế Độ GUI")
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Đang thiết lập Đấu Trường (Arena) trên {device}...\n")
     
     # ==========================================
-    # 1. NẠP CÁC ĐẤU THỦ
+    # CÀI ĐẶT 2 ĐẤU THỦ TẠI ĐÂY
+    # Bạn có thể trỏ 2 đường dẫn khác nhau nếu muốn test 2 thế hệ
     # ==========================================
-    try:
-        player1_model = load_ai("model_iter_0030.pt", device)
-        player2_model = load_ai("model_iter_0044.pt", device)
-        
-    except Exception as e:
-        print(f"❌ Lỗi khi tải Model: {e}\nHãy chắc chắn 2 file .pt đang nằm cùng thư mục.")
-        return
+    PATH_PLAYER_1 = "model_iter_0013.pt" # Cầm quân Đen
+    PATH_PLAYER_2 = "model_iter_0025.pt" # Cầm quân Trắng
+    
+    net1 = load_ai(PATH_PLAYER_1, device)
+    net2 = load_ai(PATH_PLAYER_2, device)
 
-    env = GomokuEnv(board_size=15, win_condition=5)
-    NUM_GAMES = 10
-    MCTS_SIMULATIONS = 400
+    env = GomokuEnv(board_size=BOARD_SIZE, win_condition=5)
     
-    # Bảng điểm dùng tên làm key để tự động cộng đúng người
-    score = {"Vòng 5": 0, "Vòng 12": 0, "Hòa": 0}
+    # Num_simulations ở mức 200-400 là đủ để xem nó đánh
+    mcts1 = MCTS(env, net1, num_simulations=400)
+    mcts2 = MCTS(env, net2, num_simulations=400)
     
-    print("="*50)
-    print(f"🔥 GIẢI ĐẤU TỬ THẦN - {NUM_GAMES} VÁN 🔥")
-    print("Luật: Đổi bên luân phiên sau mỗi ván")
-    print("="*50 + "\n")
+    game_over = False
+    last_action = None
+    draw_board(screen, env.board)
+    
+    print("\n🔥 TRẬN ĐẤU BẮT ĐẦU! (Xem trên cửa sổ Pygame)")
 
-    # ==========================================
-    # 2. VÒNG LẶP THI ĐẤU
-    # ==========================================
-    for game in tqdm(range(NUM_GAMES), desc="Tiến độ Giải đấu"):
-        env.reset()
-        
-        # Đảo bên luân phiên cho công bằng
-        if game % 2 == 0:
-            black_name, white_name = "Vòng 30", "Vòng 44"
-            # Lưu ý: Nếu class MCTS của bạn yêu cầu truyền 'env', hãy thêm env vào: MCTS(env, model...)
-            mcts_p1 = MCTS(env, player1_model, num_simulations=MCTS_SIMULATIONS) 
-            mcts_p2 = MCTS(env, player2_model, num_simulations=MCTS_SIMULATIONS)
-        else:
-            black_name, white_name = "Vòng 44", "Vòng 30"
-            mcts_p1 = MCTS(env, player2_model, num_simulations=MCTS_SIMULATIONS) 
-            mcts_p2 = MCTS(env, player1_model, num_simulations=MCTS_SIMULATIONS)
-        
-        steps = 0
-        while True:
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        if not game_over:
             current_player = env.current_player
             
-            # Chọn não bộ tương ứng để suy nghĩ (p1 luôn là Đen/Đi trước, p2 luôn là Trắng/Đi sau)
-            active_mcts = mcts_p1 if current_player == 1 else mcts_p2
+            # Chọn MCTS của người đang tới lượt
+            active_mcts = mcts1 if current_player == 1 else mcts2
+            name = "Quân ĐEN" if current_player == 1 else "Quân TRẮNG"
+            pygame.display.set_caption(f"🤖 {name} đang suy nghĩ...") 
             
             with torch.inference_mode():
-                action_probs, _ = active_mcts.search(env.board.copy(), current_player)
+                action_probs, _ = active_mcts.search(env.board.copy(), current_player, temperature=0.1)
             
-            # Lựa chọn có chứa nhiễu (exploration) để tránh việc đánh đi đánh lại 1 ván
+            # Chọn nước đi tốt nhất
             action = np.argmax(action_probs)
             
-            # Thực hiện nước đi
-            _, _, terminated, truncated, info = env.step(action)
-            steps += 1
+            # Thực thi nước đi
+            obs, reward, terminated, truncated, info = env.step(action)
+            last_action = action
             
-            # Cập nhật nước đi vừa đánh cho CẢ HAI cây suy nghĩ
-            mcts_p1.update_root(action)
-            mcts_p2.update_root(action)
+            # Cập nhật trí nhớ cho CẢ HAI AI
+            mcts1.update_root(action)
+            mcts2.update_root(action)
+            
+            draw_board(screen, env.board, last_action=last_action)
+            time.sleep(0.5) # Dừng nửa giây để bạn kịp nhìn nước đi, không bị giật lác
             
             if terminated or truncated:
                 winner = info.get("winner", 0)
                 if winner == 1:
-                    score[black_name] += 1
-                    tqdm.write(f"⚔️ Ván {game+1:2d} | ⬛ {black_name} THẮNG! (Sau {steps} nước)")
+                    msg = "⬛ QUÂN ĐEN CHIẾN THẮNG!"
                 elif winner == 2:
-                    score[white_name] += 1
-                    tqdm.write(f"⚔️ Ván {game+1:2d} | ⬜ {white_name} THẮNG! (Sau {steps} nước)")
+                    msg = "⬜ QUÂN TRẮNG CHIẾN THẮNG!"
                 else:
-                    score["Hòa"] += 1
-                    tqdm.write(f"⚔️ Ván {game+1:2d} | 🤝 HÒA! (Sau {steps} nước)")
-                break
-
-    # ==========================================
-    # 3. TỔNG KẾT BẢNG XẾP HẠNG
-    # ==========================================
-    print("\n" + "="*40)
-    print("🏆 KẾT QUẢ CHUNG CUỘC 🏆")
-    print("="*40)
-    print(f"🦊 Vòng 5 thắng  : {score['Vòng 5']}")
-    print(f"🐺 Vòng 12 thắng : {score['Vòng 12']}")
-    print(f"🤝 Số ván hòa    : {score['Hòa']}")
-    print("="*40)
+                    msg = "🤝 HÒA NHAU!"
+                
+                pygame.display.set_caption("Trận đấu kết thúc")
+                draw_winner(screen, msg)
+                print(msg)
+                game_over = True
 
 if __name__ == "__main__":
     main()

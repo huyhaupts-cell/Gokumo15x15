@@ -157,7 +157,7 @@ class MCTS:
                 policy, value = self.cache[key]
             else:
                 with torch.no_grad():
-                    policy, value = self.network(input_tensor.to(device))
+                    policy, value = self.network(input_tensor)
                 self.cache[key] = (policy, value)
 
             policy_logits = policy[0].clone()
