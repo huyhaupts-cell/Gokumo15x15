@@ -66,13 +66,17 @@ class MCTS:
         size = board.shape[0]
         stones = np.argwhere(board != 0)
 
-        if len(stones) < 10:
-            return np.where(board.ravel() == 0)[0]
+        # Nước đi đầu tiên luôn là ở giữa bàn cờ
+        if len(stones) == 0:
+            return np.array([size * size // 2])
 
         moves = set()
+        # Giới hạn tìm kiếm chỉ ở các ô nằm sát các quân cờ đã có
+        # Đổi bán kính (radius) từ 4 xuống 2 hoặc 1 cho giai đoạn đầu huấn luyện!
+        radius = 2 
         for x, y in stones:
-            for dx in range(-2, 3):
-                for dy in range(-2, 3):
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
                     nx, ny = x + dx, y + dy
                     if 0 <= nx < size and 0 <= ny < size:
                         if board[nx, ny] == 0:
@@ -200,8 +204,12 @@ class MCTS:
             winner = self.check_winner_fast(node.board, last_action)
             
             if winner != 0:
-                value = -1.0
-                node.backup(-value)
+                last_player = 3 - current_player
+                if winner == last_player:
+                    value = -1.0 # Người chơi hiện tại đã thua
+                else:
+                    value = 1.0  # Người chơi hiện tại đã thắng
+                node.backup(value)
                 continue
 
             valid_moves = self.get_candidate_moves(node.board)

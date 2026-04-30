@@ -163,7 +163,7 @@ if __name__ == '__main__':
     config = {
         "num_iterations": 100,
         "num_games_per_iteration": 32,
-        "num_mcts_simulations": 120,
+        "num_mcts_simulations": 400,
         "batch_size": 256,
         "steps_per_iteration": 200,
         "replay_buffer_size": 80000,
@@ -174,7 +174,7 @@ if __name__ == '__main__':
     agent = AlphaZeroGomoku(**config)
     
     # Đảm bảo đường dẫn này khớp với thư mục Input trên Kaggle của bạn
-    checkpoint_path = "model_iter_0013.pt" 
+    checkpoint_path = "model_iter_0.pt" 
     agent.load_checkpoint(checkpoint_path)
     
     agent.train()
