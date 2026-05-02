@@ -16,20 +16,23 @@ class BatchedMCTS:
         # Không dùng cache ở đây vì gom batch thay đổi liên tục
 
     def get_candidate_moves(self, board):
-        size = board.shape[0]
-        stones = np.argwhere(board != 0)
-        if len(stones) < 10:
-            return np.where(board.ravel() == 0)[0]
-
-        moves = set()
-        for x, y in stones:
-            for dx in range(-2, 3):
-                for dy in range(-2, 3):
-                    nx, ny = x + dx, y + dy
-                    if 0 <= nx < size and 0 <= ny < size:
-                        if board[nx, ny] == 0:
-                            moves.add(nx * size + ny)
-        return np.array(list(moves))
+        # TÌM CÁC Ô TRỐNG TRONG MỘT VÙNG CỐ ĐỊNH (ACTIVE ZONE)
+        # Giới hạn AI chỉ được đánh trong vùng 9x9 ở trung tâm bàn cờ
+        ACTIVE_SIZE = 9
+        
+        # Tính toán tọa độ giới hạn
+        center = self.board_size // 2
+        offset = ACTIVE_SIZE // 2
+        min_x, max_x = max(0, center - offset), min(self.board_size, center + offset + 1)
+        min_y, max_y = max(0, center - offset), min(self.board_size, center + offset + 1)
+        
+        moves = []
+        for x in range(min_x, max_x):
+            for y in range(min_y, max_y):
+                if board[x, y] == 0:
+                    moves.append(x * self.board_size + y)
+                    
+        return np.array(moves)
 
     def check_winner_fast(self, board, last_move):
         if last_move is None: return 0

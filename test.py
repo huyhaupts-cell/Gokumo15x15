@@ -106,7 +106,7 @@ def main():
     # ==========================================
     # KHỞI TẠO GAME VÀ AI
     # ==========================================
-    MODEL_PATH = "model_iter_0025.pt" 
+    MODEL_PATH = "model_iter_0004.pt" 
     network = load_ai(MODEL_PATH, device)
     
     env = GomokuEnv(board_size=BOARD_SIZE, win_condition=5)
