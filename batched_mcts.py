@@ -32,7 +32,7 @@ class BatchedMCTS:
                 if board[x, y] == 0:
                     moves.append(x * self.board_size + y)
                     
-        return np.array(moves)
+        return np.array(moves, dtype=np.int32)
 
     def check_winner_fast(self, board, last_move):
         if last_move is None: return 0
